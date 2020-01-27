@@ -27,7 +27,7 @@ A ruleset for sending and retrieving Text Messages, the Messaging rule works and
   }
   
   rule Messaging {
-    select when echo Messaging where event:attr("fromPhone")
+    select when echo Messaging
 
     pre {
         toPhone = (event:attr("toPhone").isnull() || event:attr("toPhone") == "") => 9402307232 | event:attr("toPhone") //You can default the toPhone number
