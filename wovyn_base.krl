@@ -16,17 +16,15 @@ ruleset wovyn_base {
   }
   
   rule process_heartbeat {
-    select when wovyn heartbeat
+    select when wovyn heartbeat where event:attr("genericThing")
     pre {
       time = time:now()
       temp = event:attr("genericThing")["data"]["temperature"][0]["temperatureF"]
-      
     }
-    if not event:attr("genericThing").isnull()
-    then
+    
     send_directive("say",{"Temperature": temp})
     
-    fired {
+    always {
       raise wovyn event "new_temperature_reading"
       attributes {"temperature":temp, "timestamp":time}
     }
