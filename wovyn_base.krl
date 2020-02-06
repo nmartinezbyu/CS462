@@ -13,6 +13,7 @@ ruleset wovyn_base {
     }
     
     temperature_threshold = 80
+    phone = 9402307232
   }
   
   rule process_heartbeat {
@@ -35,14 +36,13 @@ ruleset wovyn_base {
     pre{
       temperature = event:attr("temperature")
       timestamp = event:attr("timestamp")
+      message = (temperature > temperature_threshold) => "Temperature Violation!!!!" | "You good"
     }
-    
-    if event:attr("temperature") > temperature_threshold
-    then 
-    send_directive("say",{"something": "Temperature Violation!!!!"})
-    fired {
+    send_directive("say",{"something": message})
+    always {
           raise wovyn event "threshold_violation"
           attributes{"temperature":temperature, "timestamp":timestamp}
+          if temperature > temperature_threshold
     }
   }
   
@@ -51,6 +51,7 @@ ruleset wovyn_base {
     
     always {
       raise echo event "Messaging"
+      attributes{"toPhone": phone}
     }
   }
 }
