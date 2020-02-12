@@ -22,9 +22,7 @@ ruleset temperature_store {
     }
     
     inrange_temperatures = function() {
-        ent:reading.filter(function(x){
-        x ["temperature"] < 80           
-        });
+        ent:reading.difference(ent:violation)
     }
     
   }
