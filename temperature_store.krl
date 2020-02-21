@@ -1,58 +1,56 @@
-ruleset temperature_store {
+ruleset wovyn_base {
   meta {
-    provides temperatures, threshold_violations, inrange_temperatures
-    shares temperatures, threshold_violations, inrange_temperatures, __testing
+    shares __testing
+    use module sensor_profile alias sp
   }
   global {
     __testing = { "queries":
-      [ { "name": "__testing" }, {"name": "temperatures"}, {"name": "threshold_violations"}, {"name": "inrange_temperatures"}
+      [ { "name": "__testing" }
       //, { "name": "entry", "args": [ "key" ] }
       ] , "events":
-      [ //{ "domain": "d1", "type": "t1" }
+      [ { "domain": "wovyn", "type": "heartbeat"}
       //, { "domain": "d2", "type": "t2", "attrs": [ "a1", "a2" ] }
       ]
     }
     
-    temperatures = function() {
-      ent:reading
-    }
-    
-    threshold_violations = function() {
-      ent:violation  
-    }
-    
-    inrange_temperatures = function() {
-        ent:reading.difference(ent:violation)
-    }
-    
   }
   
-  rule collect_temperatures {
+  rule process_heartbeat {
+    select when wovyn heartbeat where event:attr("genericThing")
+    pre {
+      time = time:now()
+      temp = event:attr("genericThing")["data"]["temperature"][0]["temperatureF"]
+    }
+    
+    send_directive("say",{"Temperature": temp})
+    
+    always {
+      raise wovyn event "new_temperature_reading"
+      attributes {"temperature":temp, "timestamp":time}
+    }
+  }
+  
+  rule find_high_temps {
     select when wovyn new_temperature_reading
     pre{
-      map =  {"temperature":event:attr("temperature"), "timestamp":event:attr("timestamp")}
+      temperature = event:attr("temperature")
+      timestamp = event:attr("timestamp")
+      message = (temperature.klog("temp") > sp:setThreshold().klog("threshold")) => "Temperature Violation!!!!" | "You good"
     }
-    always{
-      ent:reading := ent:reading.defaultsTo([]).append(map);
-  
+    send_directive("say",{"something": message})
+    always {
+          raise wovyn event "threshold_violation"
+          attributes{"temperature":temperature, "timestamp":timestamp}
+          if temperature > sp:setThreshold()
     }
   }
   
-  rule collect_threshold_violations {
+  rule threshold_notification {
     select when wovyn threshold_violation
-    pre{
-      map =  {"temperature":event:attr("temperature"), "timestamp":event:attr("timestamp")}
-    }
-    always{
-      ent:violation := ent:violation.defaultsTo([]).append(map);
-    }
-  }
-  
-  rule clear_temperatures {
-    select when sensor reading_reset
-    always{
-      clear ent:reading;
-      clear end:violation;
+    
+    always {
+      raise echo event "Messaging"
+      attributes{"toPhone": sp:setPhone()}
     }
   }
 }
