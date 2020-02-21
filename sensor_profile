@@ -1,0 +1,60 @@
+ruleset sensor_profile {
+  meta {
+    shares profile, setThreshold, setPhone, __testing
+    provides profile, setThreshold, setPhone
+    
+  }
+  global {
+    __testing = { "queries":
+      [ { "name": "__testing" }
+      //, { "name": "entry", "args": [ "key" ] }
+      ] , "events":
+      [ { "domain": "sensor", "type": "profile_updated", "attrs": ["location", "name", "phoneNum", "threshold"] }
+      //, { "domain": "d2", "type": "t2", "attrs": [ "a1", "a2" ] }
+      ]
+    }
+    
+    setThreshold = function() {
+      ent:info {"threshold"}.as("Number")
+    }
+    
+    setPhone = function() {
+      ent:info {"phoneNum"}
+    }
+    
+    profile = function() {
+      ent:info
+    }
+  }
+
+  rule update {
+    select when sensor profile_updated
+    pre{
+      location = (event:attr("location").isnull() || event:attr("location") == "") => ent:info{"location"}.defaultsTo(["Pico Labs HQ"]) | event:attr("location")
+      name = (event:attr("name").isnull() || event:attr("name") == "") => ent:info{"name"}.defaultsTo(["No Name Set"]) | event:attr("name")
+      phoneNum = (event:attr("phoneNum").isnull() || event:attr("phoneNum") == "") => ent:info{"phoneNum"}.defaultsTo(["No Phone Set"]) | event:attr("phoneNum")
+      threshold = (event:attr("threshold").isnull() || event:attr("threshold") == "") => ent:info{"threshold"}.defaultsTo(["No Threshold Set"]) | event:attr("threshold")
+    
+      map =  {"location":location, "name":name, "phoneNum":phoneNum, "threshold":threshold}
+      
+      
+    }
+    
+    always{
+      ent:info := map;
+  
+      }      
+  }
+  
+  rule autoAccept {
+    select when wrangler inbound_pending_subscription_added
+    pre{
+      attributes = event:attrs.klog("subcription :");
+    }
+    always{
+      raise wrangler event "pending_subscription_approval"
+        attributes attributes;       
+      log info "auto accepted subcription.";
+    }
+  }
+}
