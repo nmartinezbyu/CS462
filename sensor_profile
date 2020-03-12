@@ -15,7 +15,7 @@ ruleset sensor_profile {
     }
     
     setThreshold = function() {
-      ent:info {"threshold"}.as("Number")
+      ent:info {"threshold"}
     }
     
     setPhone = function() {
