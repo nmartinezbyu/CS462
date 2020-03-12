@@ -2,6 +2,7 @@ ruleset wovyn_base {
   meta {
     shares __testing
     use module sensor_profile alias sp
+    use module io.picolabs.subscription alias subscription
   }
   global {
     __testing = { "queries":
@@ -11,6 +12,14 @@ ruleset wovyn_base {
       [ { "domain": "wovyn", "type": "heartbeat"}
       //, { "domain": "d2", "type": "t2", "attrs": [ "a1", "a2" ] }
       ]
+    }
+    
+    getRecepeints = function() {
+       subscription:established().filter(function(x){
+         x{"Tx_role"} == "manager" 
+       }).map(function(x){
+         x{"Tx"}
+       })
     }
     
   }
@@ -35,22 +44,26 @@ ruleset wovyn_base {
     pre{
       temperature = event:attr("temperature")
       timestamp = event:attr("timestamp")
+      recepeints = getRecepeints()
       message = (temperature.klog("temp") > sp:setThreshold().klog("threshold")) => "Temperature Violation!!!!" | "You good"
     }
     send_directive("say",{"something": message})
     always {
           raise wovyn event "threshold_violation"
-          attributes{"temperature":temperature, "timestamp":timestamp}
+          attributes{"temperature":temperature, "timestamp":timestamp, "receipeints": recepeints}
           if temperature > sp:setThreshold()
     }
   }
   
   rule threshold_notification {
     select when wovyn threshold_violation
+    foreach event:attr("receipeints") setting (e)
     
-    always {
-      raise echo event "Messaging"
-      attributes{"toPhone": sp:setPhone()}
-    }
+    event:send({"eci":e, "domain":"temperature", "type":"threshold_violation"})
+    
+    // always {
+    //   raise echo event "Messaging"
+    //   attributes{"toPhone": sp:setPhone()}
+    // }
   }
 }
