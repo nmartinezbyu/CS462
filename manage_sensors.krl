@@ -1,15 +1,17 @@
 ruleset manage_sensors {
   meta {
-    shares __testing, sensors, collectTemperatures
+    shares __testing, sensors, collectTemperatures, subs, getPicoName
     use module io.picolabs.wrangler alias wrangler
+    use module io.picolabs.subscription alias subscription
   }
   global {
     __testing = { "queries":
-      [ { "name": "__testing" }, {"name": "sensors"}, {"name": "collectTemperatures"}
+      [ { "name": "__testing" }, {"name": "sensors"}, {"name": "collectTemperatures"}, {"name": "subs"}, {"name": "getPicoName", "args":["eci"]}
       //, { "name": "entry", "args": [ "key" ] }
       ] , "events":
       [ { "domain": "sensor", "type": "new_sensor", "attrs": ["picoName"] }
       , { "domain": "sensor", "type": "unneeded_sensor", "attrs": [ "picoName", "id"] }
+      , { "domain": "sensor", "type": "intro_sub", "attrs": [ "eci", "name", "Tx_role", "Rx_role", "channel_type", "Tx_host"] }
       //, { "domain": "d2", "type": "t2", "attrs": [ "a1", "a2" ] }
       ]
     }
@@ -30,11 +32,24 @@ ruleset manage_sensors {
     }
     
     collectTemperatures = function() {
-      temperatures = ent:sensors.map(function(x){
-        wrangler:skyQuery( x{"eci"} , "temperature_store", "temperatures")
+      
+      temperatures = subs().map(function(x){
+        wrangler:skyQuery( x{"Tx"} , "temperature_store", "temperatures", {}, (x{"Tx_host"}) => x{"Tx_host"} | "http://localhost:8080")
       });
       temperatures
     }
+    
+    getPicoName = function(eci) {
+        foundName = wrangler:children().filter(function(x){
+          eci == x{"eci"}
+        });
+        foundName[0]{"name"};
+    }
+    
+    subs = function() {
+      subscription:established("Tx_role", "sensor")
+    }
+    
     
     default_threshold = 80
     default_phone = 9402307232
@@ -53,7 +68,7 @@ ruleset manage_sensors {
     notfired {
       raise wrangler event "child_creation"
         attributes { "location":"PicoDesk1", "name":picoName, "phoneNum": default_phone, "threshold":default_threshold, "color": "#ffff00", "rids": ["temperature_store", "wovyn_base", "sensor_profile"]};
-      raise echo event "add_sensor_name"
+      raise sensor event "add_sensor_name"
         attributes {"picoName": picoName};
     }
   }
@@ -67,8 +82,95 @@ ruleset manage_sensors {
       threshold = event:attr("threshold")
       eci = event:attr("eci")
     }
+      
     event:send({"eci":eci, "domain":"sensor", "type":"profile_updated", "attrs":{"location": location, "name": name, "phoneNum": phoneNum, "threshold": threshold}})
+    
+    always {
+        raise sensor event "subscribe"
+          attributes {"picoName": name, "txRole": "sensor", "rxRole":"manager", "chanType": "subscription", "wellknown_Tx": eci};
+    }
   }
+  
+  rule subscribe {
+    select when sensor subscribe
+    pre {
+      name = event:attr("picoName")
+      Tx_role = event:attr("txRole")
+      Rx_role = event:attr("rxRole")
+      channel_type = event:attr("chanType")
+      wellKnown_Tx = event:attr("wellknown_Tx")
+    }
+    always
+    {
+      raise wrangler event "subscription" 
+        attributes
+          { "name" : name,
+            "Tx_role": Tx_role,
+            "Rx_role": Rx_role,
+            "channel_type": channel_type,
+            "wellKnown_Tx" : wellKnown_Tx
+          }
+    }
+  }
+  
+  rule add_to_sublist {
+    select when wrangler subscription_added
+    pre {
+      picoEci = event:attr("Tx")
+      picoName = event:attr("name") || getPicoName(picoEci)
+      Rx_role = event:attr("Rx_role")
+      id = event:attr("Id")
+      map = {"id": id, "eci":picoEci}
+    }
+    if Rx_role == "sensor" then
+      send_directive("Adding to sublist")
+    fired {
+      ent:sublist := ent:sublist.defaultsTo({}).put(picoName, map);
+    }
+  }
+  
+  rule introduce_subscription {
+    select when sensor intro_sub
+    pre {
+      wellKnown_Tx = event:attr("eci")
+      name = event:attr("name")
+      Tx_role = event:attr("Tx_role")
+      Rx_role = event:attr("Rx_role")
+      channel_type = event:attr("channel_type")
+      Tx_host = (event:attr("Tx_host").isnull() || event:attr("Tx_host") == "" => null | event:attr("Tx_host"))
+    }
+    
+    // event:send(
+    //   { "eci": managerEci, "eid": "subscription",
+    //     "domain": "wrangler", "type": "subscription",
+    //     "attrs": { "name": name,
+    //               "Tx_role": Tx_role,
+    //               "Rx_role": Rx_role,
+    //               "channel_type": channel_type,
+    //               "wellKnown_Tx": sensor{"eci"} } } )
+    always {
+      raise wrangler event "subscription"
+        attributes {"name": name,
+                   "Tx_role": Tx_role,
+                   "Rx_role": Rx_role,
+                   "Tx_host": Tx_host,
+                   "channel_type": channel_type,
+                   "wellKnown_Tx": wellKnown_Tx}
+    }
+  }
+  
+  rule autoAccept {
+    select when wrangler inbound_pending_subscription_added
+    pre{
+      attributes = event:attrs.klog("subcription :");
+    }
+    always{
+      raise wrangler event "pending_subscription_approval"
+        attributes attributes;       
+      log info "auto accepted subcription.";
+    }
+  }
+  
   
   rule delete_sensor {
     select when sensor unneeded_sensor
@@ -86,7 +188,7 @@ ruleset manage_sensors {
   }
   
   rule add_name_to_list {
-    select when echo add_sensor_name
+    select when sensor add_sensor_name
     pre {
       picoName =  event:attr("picoName")
       map = getPicoInfo(picoName)
@@ -94,7 +196,15 @@ ruleset manage_sensors {
     }
     always {
     ent:sensors := ent:sensors.defaultsTo({}).put(picoName, map);
-    //ent:sublist := ent:sublist.defaultsTo([]).append(map);//You added this for lab 9
+    }
+  }
+  
+  
+  rule listen_for_violations {
+    select when temperature threshold_violation
+    always
+    {
+      raise notify event "send_msg"
     }
   }
   
