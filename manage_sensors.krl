@@ -1,17 +1,19 @@
 ruleset manage_sensors {
   meta {
-    shares __testing, sensors, collectTemperatures, subs, getPicoName
+    shares __testing, sensors, collectTemperatures, subs, getPicoName, getLatestReports
     use module io.picolabs.wrangler alias wrangler
     use module io.picolabs.subscription alias subscription
   }
   global {
     __testing = { "queries":
       [ { "name": "__testing" }, {"name": "sensors"}, {"name": "collectTemperatures"}, {"name": "subs"}, {"name": "getPicoName", "args":["eci"]}
+      , { "name": "getLatestReports" }
       //, { "name": "entry", "args": [ "key" ] }
       ] , "events":
       [ { "domain": "sensor", "type": "new_sensor", "attrs": ["picoName"] }
       , { "domain": "sensor", "type": "unneeded_sensor", "attrs": [ "picoName", "id"] }
       , { "domain": "sensor", "type": "intro_sub", "attrs": [ "eci", "name", "Tx_role", "Rx_role", "channel_type", "Tx_host"] }
+      , { "domain": "sensor", "type": "report" }
       //, { "domain": "d2", "type": "t2", "attrs": [ "a1", "a2" ] }
       ]
     }
@@ -48,6 +50,41 @@ ruleset manage_sensors {
     
     subs = function() {
       subscription:established("Tx_role", "sensor")
+    }
+    
+    addReportSensors = function(id) {
+      report = ent:sensorReport
+      updatedReport = (report.isnull()) => report.defaultsTo({}).put(id, {"temperature_sensors": 1, "responding": 0, "temperatures": []})
+                      | (report{id}.isnull()) => report.put(id, {"temperature_sensors": 1, "responding": 0, "temperatures": []})
+                      | report.set([id, "temperature_sensors"], report{id}{"temperature_sensors"} + 1)
+      updatedReport
+    }
+    
+    addTempToReport = function(id, rx, temps) {
+      report = ent:sensorReport
+      updatedReport = (report.isnull()) => report.defaultsTo({}).put(id, {"temperatures": [{}.put(rx, temps)]}) 
+                      | report.set([id, "temperatures"], report{id}{"temperatures"}.append({}.put(rx, temps)))
+      updatedRespondingReport = updatedReport.set([id, "responding"], updatedReport{id}{"temperatures"}.length().klog("length"))
+      updatedRespondingReport
+    }
+    
+    // getReport = function() {
+    //   ent:sensorReport.defaultsTo([])
+    // }
+    
+    storeId = function(id) {
+      ent:allIds.defaultsTo([]).append(id)
+    }
+    
+    getLatestReports = function() {
+      allIds = ent:allIds.defaultsTo([])
+      lastFiveIds = (allIds.length() > 5) => allIds.slice(allIds.length() - 5, allIds.length() - 1)
+                  | allIds
+      lastFiveReports = lastFiveIds.map(function(x){
+        {}.put(x, ent:sensorReport{x})
+      })
+      
+      lastFiveReports
     }
     
     
@@ -195,7 +232,7 @@ ruleset manage_sensors {
       
     }
     always {
-    ent:sensors := ent:sensors.defaultsTo({}).put(picoName, map);
+      ent:sensors := ent:sensors.defaultsTo({}).put(picoName, map);
     }
   }
   
@@ -205,6 +242,33 @@ ruleset manage_sensors {
     always
     {
       raise notify event "send_msg"
+    }
+  }
+  
+  rule report {
+    select when sensor report
+    foreach subs() setting(sensor)
+    pre {
+      id = event:attr("id") || ent:currentReportId.defaultsTo(random:uuid())
+    }
+    event:send({"eci": sensor{"Tx"}.klog("The eci"), "domain": "sensor", "type": "report_temps", "attrs": {"id": id, "Rx": sensor{"Rx"}}})
+    always {
+      ent:sensorReport := addReportSensors(id)
+      ent:currentReportId := id
+      ent:currentReportId := null on final;
+      ent:allIds := storeId(id) on final;
+    }
+  }
+  
+  rule receive_report {
+    select when sensor report_received
+    pre {
+      theirRx = event:attr("Rx")
+      temps = event:attr("temperatures")
+      id = event:attr("id")
+    }
+    always {
+      ent:sensorReport := addTempToReport(id, theirRx, temps)
     }
   }
   
