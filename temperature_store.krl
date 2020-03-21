@@ -2,6 +2,7 @@ ruleset temperature_store {
   meta {
     provides temperatures, threshold_violations, inrange_temperatures
     shares temperatures, threshold_violations, inrange_temperatures, __testing
+    use module io.picolabs.subscription alias subscription
   }
   global {
     __testing = { "queries":
@@ -23,6 +24,9 @@ ruleset temperature_store {
     
     inrange_temperatures = function() {
         ent:reading.difference(ent:violation)
+    }
+    subs = function(tx) {
+      subscription:established("Tx", tx)[0]
     }
     
   }
@@ -46,6 +50,22 @@ ruleset temperature_store {
     always{
       ent:violation := ent:violation.defaultsTo([]).append(map);
     }
+  }
+  
+  rule report_info {
+    select when sensor report_temps
+    pre{
+      id = event:attr("id")
+      Rx = event:attr("Rx");
+      //originator = subs(managerRx);
+      Tx = meta:eci 
+      //originator{"Tx"}
+      //sensorRx = originator{"Rx"}
+      temperatures = temperatures()
+    }
+    event:send({
+      "eci": Rx, "domain": "sensor", "type": "report_received", "attrs": {"Rx": Tx, "temperatures": temperatures, "id": id}
+    })
   }
   
   rule clear_temperatures {
